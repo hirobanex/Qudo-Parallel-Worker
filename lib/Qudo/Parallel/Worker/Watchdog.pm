@@ -6,87 +6,75 @@ use base 'Qudo::Worker';
 sub max_retries { 10 }
 sub retry_delay { 10 }
 
-sub work_safely {
-    my ($class, $job) = @_;
+sub work{
+    my ($class,$job) = @_;
+    
+    my $watchdog = $class->can('custom_watchdog') || $class->can('default_watchdog');#まどろっこしいから継承で上書きしちゃう？
 
-    if ($job->funcname->set_job_status) {
-        $job->job_start_time = time;
-    }
-
-    my $master = $job->manager->{qudo};
-
-    my @uniqkeys = split ',', $job->arg;
-    my @funcs;
-    for my $key (@uniqkeys) {
-        my ($func, undef) = split '_', $key;
-        push @funcs, $func;
-    }
-    my $args = +{
-        limit  => 0,
-        offset => 0,
-        funcs  => \@funcs,
-    };
-    my $rows = $master->driver_for($job->db)->job_status_list($args);
-
-    unless (scalar(@$rows)) {
-        $job->reenqueue(
-            {
-                grabbed_until => 0,
-                retry_cnt     => $job->retry_cnt + 1,
-                retry_delay   => $class->retry_delay,
-            }
-        );
-        return;
-    }
-
-    my @ok_uniqkeys;
-    for my $row (@$rows) {
-        for my $uniqkey (@uniqkeys) {
-            if ($row->{uniqkey} eq $uniqkey) {
-                push @ok_uniqkeys, $uniqkey;
-            }
+    if($watchdog->($job)){
+        if($class->can('after_work')){
+            $class->after_work($job);
         }
-    }
-    if (scalar(@ok_uniqkeys)!=scalar(@uniqkeys)) {
-        $job->reenqueue(
-            {
-                grabbed_until => 0,
-                retry_cnt     => $job->retry_cnt + 1,
-                retry_delay   => $class->retry_delay,
-            }
-        );
-        return;
-    }
 
-    my $res;
-    eval {
-        $res = $class->work($job);
-    };
-
-    if ($job->is_aborted) {
-        $job->dequeue;
-        return $res;
+        $job->completed;
     }
-
-    if ( my $e = $@ || ! $job->is_completed ) {
-        if ( $job->retry_cnt < $class->max_retries ) {
-            $job->reenqueue(
-                {
-                    grabbed_until => 0,
-                    retry_cnt     => $job->retry_cnt + 1,
-                    retry_delay   => $class->retry_delay,
-                }
-            );
-        } else {
-            $job->dequeue;
-        }
-        $job->failed($e || 'Job did not explicitly complete or fail');
-    } else {
-        $job->dequeue;
-    }
-
-    return $res;
 }
+
+#alter.sqlはどうしよっか？
+#jsonでfuncとuniqkeyをもってきて、いるのが前提だけど・・・・
+sub default_watchdog{
+    my  $job = shift;
+
+    my $db         = $job->manager->{qudo}->driver_for($job->db);
+
+    my $child_job_count    = scalar(@{$job->arg->{child_jobs}});
+    my $ok_child_job_count = 0;
+
+    for my $child_job(@{$job->arg->{child_jobs}}){
+        $ok_child_job_count += $db->search_by_sql(
+            q{
+                SELECT job_status.id
+                FROM job_status
+                INNER JOIN func ON job_status.func_id = func.id
+                WHERE 
+                    job_status.status  = 'completed' AND
+                    func.name          = ?           AND
+                    job_status.uniqkey = ?
+            },
+            [$child_job->{funcname},$child_job->{args}->{uniqkey}],
+        )->count;
+    #    $ok_child_job_count += _is_child_job($child_job,$db);
+    }
+
+    if($ok_child_job_count != $child_job_count){
+        die "ok_child_job_count --- $ok_child_job_count, child_job_count --- $child_job_count";
+        return 0;
+    }else{
+        return 1;
+    }
+}
+
+#生SQLってよくないとかだったらこちらを採用
+sub _is_child_job{
+    my ($child_job,$db) = @_;
+    
+    my $rs = $db->resultset();
+    
+    $rs->add_select('job_status.id');
+    $rs->add_join(job_status => {
+        type      => 'inner',
+        table     => 'func',
+        condition => 'job_status.func_id = func.id',
+    });
+    $rs->add_where('job_status.status' => 'completed');
+    $rs->add_where('job_status.uniqkey' => $child_job->{args}->{uniqkey});
+    $rs->add_where('func.name' => $child_job->{funcname});
+    
+    my $itr = $rs->retrieve;
+    
+    return $itr->count;
+}
+
 
 1;
 __END__

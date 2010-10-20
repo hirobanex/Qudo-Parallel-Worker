@@ -4,74 +4,104 @@ use warnings;
 use base 'Qudo::Worker';
 our $VERSION = '0.01';
 
-sub add_child_job {
-    my ($self, $funcname, $arg) = @_;
+sub set_job_status { 1 }
 
+sub work{
+    my ($class,$job) = @_;
+
+    my $self = bless {
+        _child_jobs => [],
+        _min_child_priority => ''
+    }, $class;
+
+    $self->parallel_work($job);
+
+    $job->completed;
+}
+
+sub add_child_job {
+    my ($self,$funcname,$args,$warning_message_off) = @_;
+
+    $args->{priority} = $self->_set_child_priority($args->{priority});
+    
+    $args->{priority} = $self->_set_min_child_priority($args->{priority});
+    
+    unless($warning_message_off){
+        unless($args->{uniqkey}){
+            warn "missing uniqkey...you can't use default_watchdog method in 'Qudo::Parallel::Worker::Watchdog'";
+        }
+
+        unless($funcname){
+            warn "missing funcname...you can't use default_watchdog method in 'Qudo::Parallel::Worker::Watchdog'";
+        }
+    }
+    
     push @{$self->{_child_jobs}}, +{
         funcname => $funcname,
-        arg      => $arg,
+        args     => $args,
     };
+
+}
+
+sub _set_child_priority{
+    my ($self,$child_priority) =@_;
+
+    unless($child_priority){
+        $child_priority = 1;
+    }
+
+    return $child_priority;
+}
+
+sub _set_min_child_priority{
+    my ($self,$child_priority) =@_;
+
+    if(!$self->{_min_child_priority} || (($self->{_min_child_priority}||0) > $child_priority)){
+        $self->{_min_child_priority} = $child_priority;
+    }
 }
 
 sub start_child_job {
-    my ($self, $args) = @_;
+    my ($self,$job,$watchdog,$args) = @_;
 
-    my $job = $args->{job} or die "missing main job...";
-    my $watch_dog = $args->{watch_dog} or die "missing watch dog class...";
+    $job or die "missing main job...";
+    $watchdog or die "missing watch dog class...";
 
     my $manager = $job->manager;
     my $db = $manager->driver_for($job->db);
+   
+    $manager->register_hooks(qw/Qudo::Hook::Serialize::JSON/);#jsonにしてしまった・・・ここのエンキューだけフック指定ってできたっけ？
+
+    $args = $self->_setting_args($watchdog,$args);
+
     $db->dbh->begin_work;
 
-    my @child_jobs;
-
         for my $child_job (@{$self->{_child_jobs}}) {
-            $child_job->{arg}->{uniqkey} = join '_', $child_job->{funcname}, $job->id;
-            push @child_jobs, $manager->enqueue($child_job->{funcname}, $child_job->{arg}, $db)->uniqkey;
+            $manager->enqueue($child_job->{funcname}, $child_job->{args});
         }
-
-    $manager->enqueue($watch_dog, {arg => join ',', @child_jobs});
+        $manager->enqueue($watchdog, $args);
 
     $db->dbh->commit;
 }
 
-sub work_safely {
-    my ($class, $job) = @_;
+sub _setting_args{
+    my ($self,$watchdog,$args) = @_;
 
-    my $self = bless +{}, $class;
+    $args->{arg}->{child_jobs} = $self->{_child_jobs};
 
-    $job->job_start_time = time;
-
-    my $res;
-    eval {
-        $res = $self->work($job);
-    };
-
-    if ($job->is_aborted) {
-        $job->dequeue;
-        return $res;
+    if(defined($args->{run_after})){
+        $args->{run_after} = $watchdog->retry_delay;
     }
-
-    if ( my $e = $@ || ! $job->is_completed ) {
-        if ( $job->retry_cnt < $class->max_retries ) {
-            $job->reenqueue(
-                {
-                    grabbed_until => 0,
-                    retry_cnt     => $job->retry_cnt + 1,
-                    retry_delay   => $class->retry_delay,
-                }
-            );
-        } else {
-            $job->dequeue;
+    
+    if(defined($args->{priority})){
+        if($args->{priority} > $self->{_min_child_priority}){
+            warn 'watchdog arg priority is bigger than minimum priority in child_jobs';
+            $args->{priority} = $self->{_min_child_priority} - 1;
         }
-        $job->failed($e || 'Job did not explicitly complete or fail');
-    } else {
-        $job->dequeue;
     }
 
-    return $res;
+    return $args;
 }
-
 1;
 __END__
 

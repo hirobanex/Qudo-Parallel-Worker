@@ -25,3 +25,17 @@ Qudo::Parallel::Worker documentation is available as in POD. So you can do:
 to read the documentation online with your favorite pager.
 
 Atsushi Kobayashi
+
+
+Requirement[Hiroyuki Akabane]
+*各funcのジョブはそれぞれ順調に処理されていることが前提
+**【補足】逐次watchdogより多くエンキューされると想定されるchild_jobの処理のみにワーカーが手一杯になっていない
+**【実装】watchdog用のワーカーとchild_job用のワーカーは別々のability設定を行ったプロセスで立ち上げるか、
+　　　　　十分に処理の余裕を持ったプロセス数設定をしたprefork_workerを立ち上げる
+
+*塊となるwatchdogとchild_jobのセットはできるだけ近い時期に処理されるようにしなければならない
+**【補足】塊としたいchild_job間に別のjobが入り、最終的な塊としての処理全体が遅延するのは望ましくない
+**【補足】塊となっているchild_jobとwatchdogの中では、watchdogが最後に処理されることが望ましい
+**【実装】トランザクションを使用して同時にエンキューのインサートを行う
+**【実装】child_jobとwatchdogのエンキュー時にに必ずpriorityを設定し、かつ、child_jobのものより少なくともwatchdogのpriorityを-1とする
+
