@@ -39,3 +39,14 @@ Requirement[Hiroyuki Akabane]
 **【実装】トランザクションを使用して同時にエンキューのインサートを行う
 **【実装】child_jobとwatchdogのエンキュー時にに必ずpriorityを設定し、かつ、child_jobのものより少なくともwatchdogのpriorityを-1とする
 
+*【改善案】
+**job_statusをチェックするのではなく、jobをチェックしてみてもいいかもね。
+
+*【気になるところ】
+**Qudo::Hook::Serialize::JSON をデフォルトでロードしているので、同じインスタンス使用でargにスカラー入れるとencode_jsonでdieしてしまうけど・・・
+**default_watchdogってHOOKでpre_workあたりにいれる実装でもいいかもだけど、func単位でHOOKのロードってどうなのか・・
+**watchdogのSkinnyのセレクト文　search_by_sqlとresultsetのO/Rマッパー風ってどちらがいいとかあるのかしら・・・
+**SQL文っていまのところ、Driver/以下につまっているから、Pluginで実装した方がQudo全体としてきれいな実装になりそうなきがするけど・・・
+**watchdogのセレクト文にインデックスはった方がいい気がするけど、alter.sqlあてるのもなんだか・・・
+**custom_watchdogとdefault_watchdogを明示的に分けているのってどうなのよ
+**Priorityのカウントおかしくない？

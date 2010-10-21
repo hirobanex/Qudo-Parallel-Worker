@@ -24,7 +24,7 @@ sub add_child_job {
 
     $args->{priority} = $self->_set_child_priority($args->{priority});
     
-    $args->{priority} = $self->_set_min_child_priority($args->{priority});
+    $self->_set_min_child_priority($args->{priority});
     
     unless($warning_message_off){
         unless($args->{uniqkey}){
