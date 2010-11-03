@@ -41,7 +41,7 @@ sub default_watchdog{
                     func.name          = ?           AND
                     job_status.uniqkey = ?
             },
-            [$child_job->{funcname},$child_job->{args}->{uniqkey}],
+            [$child_job->{func},$child_job->{key}],
         )->count;
     #    $ok_child_job_count += _is_child_job($child_job,$db);
     }
@@ -67,8 +67,8 @@ sub _is_child_job{
         condition => 'job_status.func_id = func.id',
     });
     $rs->add_where('job_status.status' => 'completed');
-    $rs->add_where('job_status.uniqkey' => $child_job->{args}->{uniqkey});
-    $rs->add_where('func.name' => $child_job->{funcname});
+    $rs->add_where('job_status.uniqkey' => $child_job->{key});
+    $rs->add_where('func.name' => $child_job->{func});
     
     my $itr = $rs->retrieve;
     

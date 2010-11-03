@@ -87,7 +87,12 @@ sub start_child_job {
 sub _setting_args{
     my ($self,$watchdog,$args) = @_;
 
-    $args->{arg}->{child_jobs} = $self->{_child_jobs};
+    my @child_jobs = map {{
+        func => $_->{funcname},
+        key  => $_->{args}->{uniqkey},
+    }} @{$self->{_child_jobs}};
+
+    $args->{arg}->{child_jobs} = \@child_jobs;
 
     if(defined($args->{run_after})){
         $args->{run_after} = $watchdog->retry_delay;
